@@ -74,7 +74,7 @@ results_pageviews
 
 #-------------------------------------------------------
 
-#Version with Google Trends Data
+#Version with Google Trends Data - Doesn't work atm because of problems with connection to API
 
 # Full monthly index
 full_dates <- data.frame(date = seq(
@@ -83,6 +83,9 @@ full_dates <- data.frame(date = seq(
   by   = "month"
 ))
 
+gt_pandemic  <- read_gt("pandemic_trends.csv", "Pandemic")
+gt_trade_war <- read_gt("trade_war_trends.csv", "Trade_war")
+gt_tariffs   <- read_gt("tariffs_trends.csv", "Tariffs")
 
 # Define google trends topics 
 gt_topics <- c("War", "Pandemic", "Trade war", "Tariffs","Trump", "Tariff War","Reciprocal Tariffs")
@@ -134,114 +137,100 @@ cat("==== Predictive Regression Results ====\n")
 gt_results
 
 
-
-
-
 #--------------------------------
 
+#GOOGLE TRENDS WITH MANUAL DATA INPUT
 
-# 5-year sub-windows from start to end
-make_windows <- function(start, end, span_years=5) {
-  starts <- seq(start, end, by = paste0(span_years, " years"))
-  ends   <- pmin(starts %m+% years(span_years) - days(1), end)
-  data.frame(s = starts, e = ends)
-}
-
-fetch_gt_term <- function(term, overall_start, overall_end) {
-  wins <- make_windows(overall_start, overall_end, span_years=5)
-  all_chunks <- list()
-  
-  for(i in seq_len(nrow(wins))) {
-    t0 <- wins$s[i]; t1 <- wins$e[i]
-    window_str <- paste0(format(t0, "%Y-%m-%d"), " ", format(t1, "%Y-%m-%d"))
-    
-    res <- try(
-      gtrends(keyword=term, time=window_str, geo="US", gprop="web")$interest_over_time,
-      silent=TRUE
-    )
-    if(inherits(res, "try-error") || nrow(res)==0) next
-    
-    chunk <- res %>%
-      mutate(hits = as.character(hits),
-             hits = ifelse(hits == "<1", 0.5, as.numeric(hits)),
-             date = as.Date(date)) %>%
-      select(date, hits)
-    
-    # Rescale chunk so its max matches the overall max you'll see
-    # We'll align all chunks later by dividing by their own max and multiplying by the global max.
-    chunk_max <- max(chunk$hits, na.rm=TRUE)
-    chunk <- chunk %>% mutate(hits_rescaled = hits / chunk_max)
-    all_chunks[[length(all_chunks)+1]] <- chunk
-  }
-  if(length(all_chunks)==0) {
-    warning("No Google Trends data for term ", term)
-    return(tibble(date=as.Date(character()), !!term := numeric()))
-  }
-  
-  # bind all chunks and then scale them so the full series max is 100
-  full <- bind_rows(all_chunks) %>%
-    arrange(date) %>%
-    group_by(date) %>%
-    summarise(h = mean(hits_rescaled, na.rm=TRUE)) %>%
-    ungroup() %>%
-    mutate(h = h / max(h, na.rm=TRUE) * 100,
-           month = floor_date(date, "month")) %>%
-    group_by(month) %>%
-    summarise(!!term := mean(h, na.rm=TRUE)) %>%
-    rename(date = month)
-  
-  return(full)
-}
-
-# Example usage:
-overall_start <- as.Date("2004-01-01")
-overall_end   <- as.Date("2025-05-01")
-df_war <- fetch_gt_term("War", overall_start, overall_end)
-head(df_war)
-
-
-
-
-
-
-
-
-
-
-#-----------------------------------
 #manually downloading the google trends data from https://trends.google.com/trends/explore?date=all&q=Tariffs&hl=en
 
 #The csv-data is stored in the "data" folder
 
 #Loading the csv files into R:
 
-pandemic_trends <- read.csv("data/pandemic_trends.csv")
-tariffs_trends <- read.csv("data/tariffs_trends.csv")
-trade_war_trends <- read.csv("data/trade_war_trends.csv")
-war_trends <- read.csv("data/war_trends.csv")
+library(dplyr)       # data manipulation
+library(lubridate)   # date handling
+library(readxl)      # read Excel files
+library(sandwich)    # Newey–West covariance estimator
+library(lmtest)      # coeftest for robust SEs
 
-#merge all into one file: 
-gt_analysis <- cbind(pandemic_trends, tariffs_trends, trade_war_trends, war_trends)
-#remove first row
-gt_analysis <- gt_analysis[-1,]
-#give meaningful column names
-colnames(gt_analysis) <- c("pandemic", "tariffs", "trade_war", "war")
+# 1. Helper: locate a file in "data/" or project root ----
+find_path <- function(fname) {
+  paths <- c(file.path("data", fname), fname)
+  exists <- vapply(paths, file.exists, logical(1))
+  if (!any(exists)) stop("File not found: ", fname)
+  return(paths[which(exists)[1]])
+}
 
-gt_analysis <- gt_analysis %>% 
-  mutate(pandemic = ifelse(pandemic == "<1", 0, as.numeric(pandemic)), #change the column values to numeric 
-         tariffs = ifelse(tariffs == "<1", 0, as.numeric(tariffs)),
-         trade_war = ifelse(trade_war == "<1", 0, as.numeric(trade_war)),
-         war = ifelse(war == "<1", 0, as.numeric(war))
-         )
+# 2. Read & prepare returns data ----
+ret_file   <- find_path("SP500_returndata.xlsx")
+df_returns <- read_excel(ret_file, sheet = "Monthly") %>%
+  rename(date_num = yyyymm, R = ret) %>%
+  mutate(
+    date  = as.Date(paste0(as.character(date_num), "01"), "%Y%m%d"),
+    Rlead = lead(R, 1)
+  ) %>%
+  select(date, R, Rlead) %>%
+  filter(!is.na(Rlead))
 
+# 3. Helper: read Google Trends CSVs ----
+#    Expects CSVs in data/ or root, skip the first metadata line
+read_trends <- function(fname, series_name) {
+  path <- find_path(fname)
+  raw  <- read.csv(path, skip = 1, stringsAsFactors = FALSE, check.names = FALSE)
+  df   <- raw[, 1:2]
+  colnames(df) <- c("Monat", series_name)
+  df %>%
+    transmute(
+      date = as.Date(paste0(Monat, "-01"), "%Y-%m-%d"),
+      !!series_name := as.numeric(.data[[series_name]])
+    )
+}
+# 4. Load all Trends ----
+gt_war      <- read_trends("war_trends.csv",       "War")
+gt_pandemic <- read_trends("pandemic_trends.csv",  "Pandemic")
+gt_trade    <- read_trends("trade_war_trends.csv", "Trade_war")
+gt_tariffs  <- read_trends("tariffs_trends.csv",   "Tariffs")
 
+# 5. Merge into one wide table ----
+df_trends <- df_returns %>%
+  select(date) %>%
+  left_join(gt_war,      by = "date") %>%
+  left_join(gt_pandemic, by = "date") %>%
+  left_join(gt_trade,    by = "date") %>%
+  left_join(gt_tariffs,  by = "date") %>%
+  filter(if_any(War:Tariffs, ~ !is.na(.)))
+
+cat("=== Raw monthly Google Trends indices ===\n")
+print(head(df_trends, 10))
+
+# 6. One‐Month‐Ahead OLS + Newey–West ----
+topics <- c("War","Pandemic","Trade_war","Tariffs")
+results <- tibble(Topic=character(), Beta=numeric(), t_NW=numeric(), R2=numeric())
+
+for (term in topics) {
+  df <- df_returns %>%
+    inner_join(df_trends, by = "date") %>%
+    filter(!is.na(.data[[term]])) %>%
+    mutate(
+      X = as.numeric(scale(.data[[term]])),  # standardize predictor
+      Y = Rlead * 100                         # convert to percent
+    )
+  if (nrow(df) < 12) next
   
+  fit <- lm(Y ~ X, data = df)
+  r2  <- summary(fit)$r.squared
+  nw_vcov <- NeweyWest(fit, lag = 3, prewhite = FALSE)
+  nw_test <- coeftest(fit, vcov. = nw_vcov)
+  
+  results <- results %>%
+    add_row(
+      Topic = term,
+      Beta  = round(coef(fit)["X"],    4),
+      t_NW  = round(nw_test["X","t value"], 4),
+      R2    = round(r2,               4)
+    )
+}
 
-
-
-
-
-
-
-
+cat("=== One‐Month‐Ahead Forecast Results ===\n")
+print(results)
 
