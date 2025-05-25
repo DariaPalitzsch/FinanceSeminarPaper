@@ -1,3 +1,6 @@
+
+#Load all required packages for the analysis
+
 #install.packages(c("readxl","dplyr","sandwich","lmtest","httr","jsonlite","zoo","lmtest","lubridate","gtrendsR"))  # run once
 library(readxl)
 library(httr)
@@ -10,30 +13,14 @@ library(zoo)
 library(sandwich)
 library(lmtest)
 
-
-###### Load S&P 500 data #########
-returns_data <- read_excel("S&P500_returndata.xlsx", sheet = "Monthly")
-#generate a valid date column
-returns_data <- returns_data %>%
-  mutate(date = ym(yyyymm))
-
-
-######## Load the Wikipedia Pageviews
-war_df <- get_wikipedia_pageviews("War", "18710101", "20250501")
-pandemic_df <- get_wikipedia_pageviews("Pandemic", "18710101", "20250501")
-
-
-###### Load Google Trends data
-gtrends_war <- gtrends(keyword = "war", geo = "US", time = "1990-01-01 2025-04-30")$interest_over_time
-gtrends_war <- gtrends_war %>%
-  transmute(date = as.Date(date), war_trend = as.numeric(hits))
-
+#run all the functions from "functions.R"
+source("Functions.R")
 
 
 #------------------------------------------------------------------------------------------------------------------
 
-# 1. Load your returns data
-df_base <- read_excel("S&P500_returndata.xlsx", sheet = "Monthly") %>%
+# Load your returns data
+df_base <- read_excel("data/SP500_returndata.xlsx", sheet = "Monthly") %>%
   rename(date_num = yyyymm, R = ret) %>%
   mutate(
     date  = as.Date(paste0(as.character(date_num), "01"), "%Y%m%d"),
@@ -42,43 +29,27 @@ df_base <- read_excel("S&P500_returndata.xlsx", sheet = "Monthly") %>%
   select(date, R, Rlead) %>%
   filter(!is.na(Rlead))
 
-# 2. Define your Wikipedia topics
-topics <- c("War", "Pandemic", "Trade_wars", "Tariffs","Trump","China","Trade War")  
+#-------------------------------------------------------------------------------------------------------------------
 
-# 3. Helper to fetch & tidy one series
-fetch_wv <- function(article, df_dates) {
-  start   <- paste0(format(min(df_dates), "%Y%m"), "01")
-  end     <- paste0(format(max(df_dates), "%Y%m"), "01")
-  url     <- paste0(
-    "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/",
-    "en.wikipedia/all-access/user/", URLencode(article),
-    "/monthly/", start, "/", end
-  )
-  resp    <- GET(url, user_agent("R script"))
-  stop_for_status(resp)
-  js      <- content(resp, "text", encoding="UTF-8") %>% fromJSON()
-  tibble(
-    date = as.Date(paste0(substr(js$items$timestamp,1,6), "01"), "%Y%m%d"),
-    !!article := js$items$views
-  )
-}
+# Define the Wikipedia pageviews topics
+wiki_topics <- c("War", "Pandemic", "Trade_wars", "Tariffs","Trump","China","Trade War")  
 
-# 4. Build a wide table of all pageviews
-wv_list <- lapply(topics, fetch_wv, df_dates = df_base$date)
+# Build a wide table of all pageviews
+wv_list <- lapply(wiki_topics, fetch_wv, df_dates = df_base$date) #uses the function in Functions.R
 wv_all  <- Reduce(function(x,y) full_join(x,y, by="date"), wv_list)
 
-# 5. Keep only actual Wikipedia‐data dates (>= July 2015)
+# Keep only actual Wikipedia‐data dates (>= July 2015)
 wv_all <- wv_all %>%
   filter(date >= as.Date("2015-07-01"))
 
-# 6. Show the pageviews table
-print(wv_all)
+# Show the pageviews table
+wv_all
 
-# 7. Merge pageviews into returns and run OLS loop
-results <- data.frame(Topic=character(), Beta=numeric(), t_NW=numeric(), R2=numeric(),
+# Merge pageviews into returns and run OLS loop
+results_pageviews <- data.frame(Topic=character(), Beta=numeric(), t_NW=numeric(), R2=numeric(),
                       stringsAsFactors=FALSE)
 
-for(article in topics) {
+for(article in wiki_topics) {
   df <- df_base %>%
     inner_join(wv_all, by="date") %>%         # inner_join drops pre-2015 automatically
     filter(!is.na(.data[[article]])) %>%
@@ -89,7 +60,7 @@ for(article in topics) {
   nw_vcov  <- NeweyWest(mod, lag=3, prewhite=FALSE)
   nw_test  <- coeftest(mod, vcov.=nw_vcov)
   
-  results <- rbind(results, data.frame(
+  results_pageviews <- rbind(results_pageviews, data.frame(
     Topic = article,
     Beta  = round(coef(mod)["X"],4),
     t_NW  = round(nw_test["X","t value"],4),
@@ -99,31 +70,13 @@ for(article in topics) {
 }
 
 # 8. Print regression summary
-print(results)
+results_pageviews
 
-#----------------------------------------------
-
+#-------------------------------------------------------
 
 #Version with Google Trends Data
 
-# install.packages(c("gtrendsR","dplyr","lubridate","readxl","sandwich","lmtest"))
-library(gtrendsR)
-library(dplyr)
-library(lubridate)
-library(readxl)
-library(sandwich)
-library(lmtest)
-# 1) Load returns data and compute R_{t+1}
-df_base <- read_excel("S&P500_returndata.xlsx", sheet="Monthly") %>%
-  rename(date_num = yyyymm, R = ret) %>%
-  mutate(
-    date  = as.Date(paste0(as.character(date_num), "01"), "%Y%m%d"),
-    Rlead = lead(R, 1)
-  ) %>%
-  select(date, R, Rlead) %>%
-  filter(!is.na(Rlead))
-
-# 2) Full monthly index
+# Full monthly index
 full_dates <- data.frame(date = seq(
   from = as.Date("2004-01-01"),
   to   = max(df_base$date),
@@ -131,60 +84,32 @@ full_dates <- data.frame(date = seq(
 ))
 
 
-# 2. Define topics
-topics <- c("War", "Pandemic", "Trade war", "Tariffs","Trump", "Tariff War","Reciprocal Tariffs")
+# Define google trends topics 
+gt_topics <- c("War", "Pandemic", "Trade war", "Tariffs","Trump", "Tariff War","Reciprocal Tariffs")
 gt_time <- "2004-01-01 2025-05-18"
 
-# 4) Helper to pull & clean one term
-fetch_gt_term <- function(term) {
-  raw <- try(
-    gtrends(keyword=term, time=gt_time, geo="US", gprop="web")$interest_over_time,
-    silent=TRUE
-  )
-  if(inherits(raw, "try-error") || nrow(raw)==0) {
-    warning("No data for ", term)
-    return(tibble(date=as.Date(character()), !!term:=numeric()))
-  }
-  
-  # force hits to character, map "<1"→0.5, then numeric
-  raw <- raw %>%
-    mutate(hits = as.character(hits),
-           hits_num = ifelse(hits=="<1", 0.5, as.numeric(hits))) %>%
-    mutate(month = floor_date(date, "month"))
-  
-  # show first few rows so you can confirm what you got
-  cat("---- raw data for", term, "----\n")
-  print(head(raw, 6))
-  
-  # aggregate to monthly
-  out <- raw %>%
-    group_by(month) %>%
-    summarise(!!term := mean(hits_num, na.rm=TRUE)) %>%
-    rename(date = month)
-  return(out)
-}
-
-# 5) Fetch all into one wide table
+# Fetch all into one wide table
 gt_all <- full_dates
-for(term in topics) {
-  df_t <- fetch_gt_term(term)
-  gt_all <- left_join(gt_all, df_t, by="date")
-}
 
-# 6) Keep only months with any data (post-2004)
+for(term in gt_topics) {
+  df_t <- fetch_gt_term(term) #function defined in Functions.R
+  gt_all <- left_join(gt_all, df_t, by="date")
+} #close for-loop
+
+# Keep only months with any data (post-2004)
 gt_all <- gt_all %>%
   filter(date >= as.Date("2004-01-01"),
-         rowSums(!is.na(select(., all_of(topics)))) > 0)
+         rowSums(!is.na(select(., all_of(gt_topics)))) > 0)
 
-# 7) Inspect your final raw Trends table
+# Inspect your final raw Trends table
 cat("==== Final monthly Google Trends hits ====\n")
-print(gt_all)
+gt_all
 
-# 8) Loop through topics: merge, standardize, regress + NW
-results <- data.frame(Topic=character(), Beta=numeric(), t_NW=numeric(), R2=numeric(),
+# Loop through topics: merge, standardize, regress + NW
+gt_results <- data.frame(Topic=character(), Beta=numeric(), t_NW=numeric(), R2=numeric(),
                       stringsAsFactors=FALSE)
 
-for(term in topics) {
+for(term in gt_topics) {
   df <- df_base %>%
     inner_join(gt_all, by="date") %>%
     filter(!is.na(.data[[term]])) %>%
@@ -195,7 +120,7 @@ for(term in topics) {
   nw      <- NeweyWest(mod, lag=3, prewhite=FALSE)
   nw_test <- coeftest(mod, vcov.=nw)
   
-  results <- rbind(results, data.frame(
+  gt_results <- rbind(gt_results, data.frame(
     Topic = term,
     Beta  = round(coef(mod)["X"],4),
     t_NW  = round(nw_test["X","t value"],4),
@@ -204,35 +129,16 @@ for(term in topics) {
   ))
 }
 
-# 9) Show regression summary
-cat("==== Predictive Regression Results ====\n")
-print(results)
+# Show regression summary
+cat("==== Predictive Regression Results ====\n") 
+gt_results
 
 
 
 
 
+#--------------------------------
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#install.packages("gtrendsR")
-library(gtrendsR)
-library(dplyr)
-library(lubridate)
 
 # 5-year sub-windows from start to end
 make_windows <- function(start, end, span_years=5) {
@@ -292,3 +198,50 @@ overall_start <- as.Date("2004-01-01")
 overall_end   <- as.Date("2025-05-01")
 df_war <- fetch_gt_term("War", overall_start, overall_end)
 head(df_war)
+
+
+
+
+
+
+
+
+
+
+#-----------------------------------
+#manually downloading the google trends data from https://trends.google.com/trends/explore?date=all&q=Tariffs&hl=en
+
+#The csv-data is stored in the "data" folder
+
+#Loading the csv files into R:
+
+pandemic_trends <- read.csv("data/pandemic_trends.csv")
+tariffs_trends <- read.csv("data/tariffs_trends.csv")
+trade_war_trends <- read.csv("data/trade_war_trends.csv")
+war_trends <- read.csv("data/war_trends.csv")
+
+#merge all into one file: 
+gt_analysis <- cbind(pandemic_trends, tariffs_trends, trade_war_trends, war_trends)
+#remove first row
+gt_analysis <- gt_analysis[-1,]
+#give meaningful column names
+colnames(gt_analysis) <- c("pandemic", "tariffs", "trade_war", "war")
+
+gt_analysis <- gt_analysis %>% 
+  mutate(pandemic = ifelse(pandemic == "<1", 0, as.numeric(pandemic)), #change the column values to numeric 
+         tariffs = ifelse(tariffs == "<1", 0, as.numeric(tariffs)),
+         trade_war = ifelse(trade_war == "<1", 0, as.numeric(trade_war)),
+         war = ifelse(war == "<1", 0, as.numeric(war))
+         )
+
+
+  
+
+
+
+
+
+
+
+
+
