@@ -147,90 +147,22 @@ gt_results
 
 #Loading the csv files into R:
 
-library(dplyr)       # data manipulation
-library(lubridate)   # date handling
-library(readxl)      # read Excel files
-library(sandwich)    # Newey–West covariance estimator
-library(lmtest)      # coeftest for robust SEs
+# 1) Read returns
+df_returns <- read_returns("SP500_returndata.xlsx")  # or inline read + mutate
 
-# 1. Helper: locate a file in "data/" or project root ----
-find_path <- function(fname) {
-  paths <- c(file.path("data", fname), fname)
-  exists <- vapply(paths, file.exists, logical(1))
-  if (!any(exists)) stop("File not found: ", fname)
-  return(paths[which(exists)[1]])
-}
+# 2) Load trends
+trends_list <- list(
+  War       = read_trends("war_trends.csv",       "War"),
+  Pandemic  = read_trends("pandemic_trends.csv",  "Pandemic"),
+  Trade_war = read_trends("trade_war_trends.csv","Trade_war"),
+  Tariffs   = read_trends("tariffs_trends.csv",   "Tariffs")
+)
 
-# 2. Read & prepare returns data ----
-ret_file   <- find_path("SP500_returndata.xlsx")
-df_returns <- read_excel(ret_file, sheet = "Monthly") %>%
-  rename(date_num = yyyymm, R = ret) %>%
-  mutate(
-    date  = as.Date(paste0(as.character(date_num), "01"), "%Y%m%d"),
-    Rlead = lead(R, 1)
-  ) %>%
-  select(date, R, Rlead) %>%
-  filter(!is.na(Rlead))
+# 3) Merge
+df_trends <- merge_all_trends(df_returns, trends_list)
 
-# 3. Helper: read Google Trends CSVs ----
-#    Expects CSVs in data/ or root, skip the first metadata line
-read_trends <- function(fname, series_name) {
-  path <- find_path(fname)
-  raw  <- read.csv(path, skip = 1, stringsAsFactors = FALSE, check.names = FALSE)
-  df   <- raw[, 1:2]
-  colnames(df) <- c("Monat", series_name)
-  df %>%
-    transmute(
-      date = as.Date(paste0(Monat, "-01"), "%Y-%m-%d"),
-      !!series_name := as.numeric(.data[[series_name]])
-    )
-}
-# 4. Load all Trends ----
-gt_war      <- read_trends("war_trends.csv",       "War")
-gt_pandemic <- read_trends("pandemic_trends.csv",  "Pandemic")
-gt_trade    <- read_trends("trade_war_trends.csv", "Trade_war")
-gt_tariffs  <- read_trends("tariffs_trends.csv",   "Tariffs")
+# 4) Forecast
+results <- run_all_forecasts(df_returns, df_trends,
+                             topics = names(trends_list))
 
-# 5. Merge into one wide table ----
-df_trends <- df_returns %>%
-  select(date) %>%
-  left_join(gt_war,      by = "date") %>%
-  left_join(gt_pandemic, by = "date") %>%
-  left_join(gt_trade,    by = "date") %>%
-  left_join(gt_tariffs,  by = "date") %>%
-  filter(if_any(War:Tariffs, ~ !is.na(.)))
-
-cat("=== Raw monthly Google Trends indices ===\n")
-print(head(df_trends, 10))
-
-# 6. One‐Month‐Ahead OLS + Newey–West ----
-topics <- c("War","Pandemic","Trade_war","Tariffs")
-results <- tibble(Topic=character(), Beta=numeric(), t_NW=numeric(), R2=numeric())
-
-for (term in topics) {
-  df <- df_returns %>%
-    inner_join(df_trends, by = "date") %>%
-    filter(!is.na(.data[[term]])) %>%
-    mutate(
-      X = as.numeric(scale(.data[[term]])),  # standardize predictor
-      Y = Rlead * 100                         # convert to percent
-    )
-  if (nrow(df) < 12) next
-  
-  fit <- lm(Y ~ X, data = df)
-  r2  <- summary(fit)$r.squared
-  nw_vcov <- NeweyWest(fit, lag = 3, prewhite = FALSE)
-  nw_test <- coeftest(fit, vcov. = nw_vcov)
-  
-  results <- results %>%
-    add_row(
-      Topic = term,
-      Beta  = round(coef(fit)["X"],    4),
-      t_NW  = round(nw_test["X","t value"], 4),
-      R2    = round(r2,               4)
-    )
-}
-
-cat("=== One‐Month‐Ahead Forecast Results ===\n")
 print(results)
-

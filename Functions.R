@@ -60,8 +60,77 @@ fetch_gt_term <- function(term) {
   
 } #end function fetch_gt_term
 
+#-----------------------------------------------------------------------------------------------------------------------
+# 1. Locate file in data/ or project root
+find_path <- function(fname) {
+  paths <- c(file.path("data", fname), fname)
+  exists <- vapply(paths, file.exists, logical(1))
+  if (!any(exists)) stop("File not found: ", fname)
+  paths[which(exists)[1]]
+}
 
+# 2. Read returns from Excel and compute one-month-ahead return
+read_returns <- function(fname, sheet = "Monthly") {
+  path <- find_path(fname)
+  df   <- readxl::read_excel(path, sheet = sheet)
+  df   <- df %>%
+    dplyr::rename(date_num = yyyymm, R = ret) %>%
+    dplyr::mutate(
+      date  = as.Date(paste0(as.character(date_num), "01"), "%Y%m%d"),
+      Rlead = dplyr::lead(R, 1)
+    ) %>%
+    dplyr::select(date, R, Rlead) %>%
+    dplyr::filter(!is.na(Rlead))
+  return(df)
+}
 
+# 3. Read Google Trends CSVs saved in data/
+read_trends <- function(filename, series_name) {
+  path <- find_path(filename)
+  raw  <- utils::read.csv(path, skip = 1, stringsAsFactors = FALSE, check.names = FALSE)
+  df   <- raw[, 1:2]
+  colnames(df) <- c("Monat", series_name)
+  df %>%
+    dplyr::transmute(
+      date = as.Date(paste0(Monat, "-01"), "%Y-%m-%d"),
+      !!series_name := as.numeric(.data[[series_name]])
+    )
+}
 
+# 4. Merge a list of trends data frames into one wide table
+merge_all_trends <- function(df_dates, trends_list) {
+  out <- df_dates %>% dplyr::select(date)
+  for (nm in names(trends_list)) {
+    out <- dplyr::left_join(out, trends_list[[nm]], by = "date")
+  }
+  out %>% dplyr::filter(dplyr::if_any(dplyr::all_of(names(trends_list)), ~ !is.na(.)))
+}
 
+# 5. Fit one-month-ahead OLS for a topic and return summary
+fit_topic_ols <- function(df_returns, df_trends, topic, lag_nw = 3) {
+  df <- df_returns %>%
+    dplyr::inner_join(df_trends, by = "date") %>%
+    dplyr::filter(!is.na(.data[[topic]])) %>%
+    dplyr::mutate(
+      X = as.numeric(scale(.data[[topic]])),
+      Y = Rlead * 100
+    )
+  if (nrow(df) < 12) return(NULL)
+  fit <- stats::lm(Y ~ X, data = df)
+  r2  <- summary(fit)$r.squared
+  vc  <- sandwich::NeweyWest(fit, lag = lag_nw, prewhite = FALSE)
+  tst <- lmtest::coeftest(fit, vcov. = vc)
+  tibble::tibble(
+    Topic = topic,
+    Beta  = round(coef(fit)["X"], 4),
+    t_NW  = round(tst["X","t value"], 4),
+    R2    = round(r2, 4)
+  )
+}
+
+# 6. Run forecasts for all topics and return combined results
+run_all_forecasts <- function(df_returns, df_trends, topics, lag_nw = 3) {
+  purrr::map_dfr(topics,
+                 function(x) fit_topic_ols(df_returns, df_trends, x, lag_nw))
+}
 
