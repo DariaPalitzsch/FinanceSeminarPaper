@@ -8,10 +8,12 @@ library(jsonlite)
 library(dplyr)
 library(gtrendsR)
 library(lubridate)
+library(broom)
 library(dplyr)
 library(zoo)
 library(sandwich)
 library(lmtest)
+library(stargazer)
 
 #run all the functions from "functions.R"
 source("Functions.R")
@@ -166,3 +168,46 @@ results <- run_all_forecasts(df_returns, df_trends,
                              topics = names(trends_list))
 
 print(results)
+
+
+#----------- 
+
+#Analysis with Google trends data
+
+
+analysis_df <- left_join(df_returns, df_trends, by = "date")
+
+#predictive regression
+model_war <- lm(Rlead ~ War, data = analysis_df)
+model_pandemic <- lm(Rlead ~ Pandemic, data = analysis_df)
+model_trade_war <- lm(Rlead ~ Trade_war, data = analysis_df)
+model_tariffs <- lm(Rlead ~ Tariffs, data = analysis_df)
+
+# Newey-West robust standard errors (lag = 4 is standard for monthly data)
+se_war <- sqrt(diag(NeweyWest(model_war, lag = 4)))
+se_pandemic <- sqrt(diag(NeweyWest(model_pandemic, lag = 4)))
+se_tariffs  <- sqrt(diag(NeweyWest(model_tariffs,  lag = 4)))
+se_tradewar <- sqrt(diag(NeweyWest(model_trade_war, lag = 4)))
+
+# Robust coefficient test
+coeftest(model_war, vcov. = nw_se)
+
+# R-squared
+summary(model_war)$r.squared
+
+#replicating table 3 from the paper: can be extended with other google trends data
+stargazer(
+  model_war, model_pandemic, model_tariffs, model_trade_war,
+  se = list(se_war, se_pandemic, se_tariffs, se_tradewar),
+  title = "Predictive Power of Media Discourse Topics for Excess Returns",
+  dep.var.labels = "Excess Return $R_{t+1}$",
+  covariate.labels = c("War", "Pandemic", "Tariffs", "Trade War"),
+  column.labels = c("War", "Pandemic", "Tariffs", "Trade War"),
+  type = "latex",
+  keep.stat = c("n", "rsq"),
+  digits = 3,
+  no.space = TRUE,
+  out = "table3.tex"
+)
+
+#this table was stored locally and can be included in our latex-document with: \input{table3.tex}
