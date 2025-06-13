@@ -72,15 +72,15 @@ find_path <- function(fname) {
 # 2. Read returns from Excel and compute one-month-ahead return
 read_returns <- function(fname, sheet = "Monthly") {
   path <- find_path(fname)
-  df   <- readxl::read_excel(path, sheet = sheet)
+  df   <- read_excel(path, sheet = sheet)
   df   <- df %>%
-    dplyr::rename(date_num = yyyymm, R = ret) %>%
-    dplyr::mutate(
+    rename(date_num = yyyymm, R = ret) %>%
+    mutate(
       date  = as.Date(paste0(as.character(date_num), "01"), "%Y%m%d"),
-      Rlead = dplyr::lead(R, 1)
+      Rlead = lead(R, 1)
     ) %>%
-    dplyr::select(date, R, Rlead) %>%
-    dplyr::filter(!is.na(Rlead))
+    select(date, R, Rlead) %>%
+    filter(!is.na(Rlead))
   return(df)
 }
 

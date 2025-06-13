@@ -157,7 +157,15 @@ trends_list <- list(
   War       = read_trends("war_trends.csv",       "War"),
   Pandemic  = read_trends("pandemic_trends.csv",  "Pandemic"),
   Trade_war = read_trends("trade_war_trends.csv","Trade_war"),
-  Tariffs   = read_trends("tariffs_trends.csv",   "Tariffs")
+  Tariffs   = read_trends("tariffs_trends.csv",   "Tariffs"),
+  Boycott = read_trends("boycott_trends.csv", "Boycott"),
+  Consumption = read_trends("consumption_trends.csv", "Consumption"),
+  Panic = read_trends("panic_trends.csv", "Panic"),
+  Real_Estate_Boom = read_trends("real_estate_boom_trends.csv", "Real_Estate_Boom"),
+  Real_Estate_Crash = read_trends("real_estate_crash_trends.csv", "Real_Estate_Crash"),
+  Stock_Bubble = read_trends("stock_bubble_trends.csv", "Stock_Bubble"),
+  Stock_Crash = read_trends("stock_crash_trends.csv", "Stock_Crash"),
+  Tech = read_trends("tech_trends.csv", "Tech")
 )
 
 # 3) Merge
@@ -182,12 +190,29 @@ model_war <- lm(Rlead ~ War, data = analysis_df)
 model_pandemic <- lm(Rlead ~ Pandemic, data = analysis_df)
 model_trade_war <- lm(Rlead ~ Trade_war, data = analysis_df)
 model_tariffs <- lm(Rlead ~ Tariffs, data = analysis_df)
+model_boycott <- lm(Rlead ~ Boycott, data = analysis_df)
+model_consumption <- lm(Rlead ~ Consumption, data = analysis_df)
+model_panic <- lm(Rlead ~ Panic, data = analysis_df)
+model_re_boom <- lm(Rlead ~ Real_Estate_Boom, data = analysis_df)
+model_re_crash <- lm(Rlead ~ Real_Estate_Crash, data = analysis_df)
+model_stock_bubble <- lm(Rlead ~ Stock_Bubble, data = analysis_df)
+model_stock_crash <- lm(Rlead ~ Stock_Crash, data = analysis_df)
+model_tech <- lm(Rlead ~ Tech, data = analysis_df)
 
 # Newey-West robust standard errors (lag = 4 is standard for monthly data)
 se_war <- sqrt(diag(NeweyWest(model_war, lag = 4)))
 se_pandemic <- sqrt(diag(NeweyWest(model_pandemic, lag = 4)))
 se_tariffs  <- sqrt(diag(NeweyWest(model_tariffs,  lag = 4)))
 se_tradewar <- sqrt(diag(NeweyWest(model_trade_war, lag = 4)))
+se_boycott <- sqrt(diag(NeweyWest(model_boycott, lag = 4)))
+se_consumption <- sqrt(diag(NeweyWest(model_consumption, lag = 4)))
+se_panic <- sqrt(diag(NeweyWest(model_panic, lag = 4)))
+se_re_boom <- sqrt(diag(NeweyWest(model_re_boom, lag = 4)))
+se_re_crash <- sqrt(diag(NeweyWest(model_re_crash, lag = 4)))
+se_stock_bubble <- sqrt(diag(NeweyWest(model_stock_bubble, lag = 4)))
+se_stock_crash <- sqrt(diag(NeweyWest(model_stock_crash, lag = 4)))
+se_tech <- sqrt(diag(NeweyWest(model_tech, lag = 4)))
+
 
 # Robust coefficient test
 coeftest(model_war, vcov. = nw_se)
@@ -197,12 +222,12 @@ summary(model_war)$r.squared
 
 #replicating table 3 from the paper: can be extended with other google trends data
 stargazer(
-  model_war, model_pandemic, model_tariffs, model_trade_war,
-  se = list(se_war, se_pandemic, se_tariffs, se_tradewar),
+  model_war, model_pandemic, model_tariffs, model_trade_war, model_boycott,
+  se = list(se_war, se_pandemic, se_tariffs, se_tradewar, se_boycott),
   title = "Predictive Power of Media Discourse Topics for Excess Returns",
   dep.var.labels = "Excess Return $R_{t+1}$",
-  covariate.labels = c("War", "Pandemic", "Tariffs", "Trade War"),
-  column.labels = c("War", "Pandemic", "Tariffs", "Trade War"),
+  covariate.labels = c("War", "Pandemic", "Tariffs", "Trade War", "Boycott"),
+  column.labels = c("War", "Pandemic", "Tariffs", "Trade War", "Boycott"),
   type = "latex",
   keep.stat = c("n", "rsq"),
   digits = 3,
