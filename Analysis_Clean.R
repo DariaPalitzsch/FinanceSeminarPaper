@@ -50,14 +50,15 @@ wiki_articles <- c("War", "Pandemic", "Panic", "Bank_run", "Business_confidence"
 wiki_list <- lapply(wiki_articles, fetch_wv, df_dates = df_returns$date) #uses the function in Functions_Clean.R
 names(wiki_list) <- wiki_articles
 
-df_wiki <- merge_all_trends(df_returns, wiki_list)
+df_wiki <- merge_all_trends(df_returns, wiki_list) # time series from 07/15 until 11/24
 
-wiki_in <- run_all_forecasts(df_returns, df_wiki, wiki_articles)
+wiki_in <- run_all_forecasts(df_returns, df_wiki, wiki_articles) # in sample analysis (Standard predictive model)
 
 ########### In-Sample Analysis: 
 
 # Replication of Figure 2: 
 # Instead of creating word clouds as in Figure 2, use a simplified Topic Attention Measure based on Wikipedia data to construct a figure of which topics captured public attention over time.
+# scaled pageviews on y axis and years on x axis
 plot_wikipedia_topic_attention(
   df_wiki, topics = wiki_articles,
   scale_each = TRUE, 
@@ -65,11 +66,12 @@ plot_wikipedia_topic_attention(
 )
 
 # Replication of Table 2:
+# see table, additionally q1, q3 and AC1
 wiki_summary <- generate_topic_summary_table(df_wiki, file_out = "table2_wikipedia.tex")
 
 
 # Replication of Figure 4 for Tariffs and Trade_war
-
+# peaks coudld use some explaination which event happened that caused it
 plot_figure_4(df_returns, df_wiki, "Tariff", output_file = "figure4_tariffs_wiki.pdf")
 plot_figure_4(df_returns, df_wiki, "Trade_war", output_file = "figure4_tradewar_wiki.pdf")
 
@@ -99,8 +101,10 @@ table3_combined <- full_join(
 
 ####Out-of-sample: 
 
+df_wiki_oos <- inner_join(df_returns, df_wiki, by = "date")
+
 wiki_out <- purrr::map_dfr(wiki_articles, function(topic) {
-  run_oos_forecast(df_returns, df_wiki, topic, start_year = 2016)
+  run_oos_forecast(df_wiki_oos, topic, start_year = 2016)
 })
 
 
@@ -170,7 +174,7 @@ wiki_combined <- wiki_in %>%
 # ----------------
 # Part B: Google Trends Analysis
 #Google Trends Analysis for Topics that:
-  # - have a week R2 in Wikipedia analysis
+  # - have a weak R2 in Wikipedia analysis
   # - could more likely be good indicators for google search than for a Wikipedia page
   # - strong performance for wikipedia pageviews (benchmark it for Google Trends data)
 # ---------------

@@ -226,6 +226,8 @@ replicate_table3 <- function(df_returns, df_trends, topics, start, end) {
 }
 
 
+#Insample Ana
+
 # Run forecasts for all topics and return combined results
 
 run_all_forecasts <- function(df_returns, df_trends, topics, lag_nw = 3) {
