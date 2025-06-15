@@ -24,6 +24,7 @@ library(xtable)
 library(tidyr)
 library(scales)
 library(patchwork)
+library(rlang)
 
 # Load self-written Functions from Functions_Clean.R
 source("Functions_Clean.R")
@@ -168,20 +169,38 @@ wiki_combined <- wiki_in %>%
 
 # ----------------
 # Part B: Google Trends Analysis
+#Google Trends Analysis for Topics that:
+  # - have a week R2 in Wikipedia analysis
+  # - could more likely be good indicators for google search than for a Wikipedia page
+  # - strong performance for wikipedia pageviews (benchmark it for Google Trends data)
 # ---------------
+
+#Pandemic: Strong wiki_pageviews performance 
+#Panic: low R2 in wiki_pageviews, but could be a plausible GT signal
+#Bank_run: Good R2 in Table 3 pre-2020 -> test consistency in GT
+#Boycott: High t and R2 -< test generality
+#Tariff: moderate performance for wiki_pageviews (R2 = 0.009) -> GT may yield stronger results
+#Trade_war: Weak in wiki_pageviews but visible trend spikes 
+#Bear_market: Strongest overall signal in Wikipedia _> test if GT can match
+#Speculation: Moderate in Wikipedia; possibly more popular in GT searches
+#Stock_bubble: Low R2 in wikipedia_pageviews but intuitively GT relevant
+#Crash: very weak wikipedia-pageviews signal, but crisis events (e.g. 2020) may show GT strength
 
 
 gt_topics <- c(
-  "War" = "war_trends.csv",
   "Pandemic" = "pandemic_trends.csv",
   "Panic" = "panic_trends.csv",
   "Bank_run" = "bank_run_trends.csv",
   "Boycott" = "boycott_trends.csv",
   "Tariff" = "tariffs_trends.csv",
   "Trade_war" = "trade_war_trends.csv",
-  "Consumption" = "consumption_trends.csv",
-  "Stock_bubble" = "stock_bubble_trends.csv"
+  "Bear_market" = "bear_market_trends.csv",
+  "Speculation" = "speculation_trends.csv",
+  "Stock_bubble" = "stock_bubble_trends.csv",
+  "Crash" = "crash_trends.csv"
 )
+
+
 
 gt_list <- lapply(names(gt_topics), function(name) {
   read_trends(gt_topics[[name]], name)
@@ -191,13 +210,7 @@ names(gt_list) <- names(gt_topics)
 df_gt <- merge_all_trends(df_returns, gt_list)
 
 gt_in <- run_all_forecasts(df_returns, df_gt, names(gt_topics))
-gt_out <- purrr::map_dfr(names(gt_topics), function(topic) {
-  run_oos_forecast(df_returns, df_gt, topic, start_year = 2006)
-})
 
-gt_combined <- gt_in %>% 
-  inner_join(gt_out, by = "Topic") %>% 
-  select(Topic, Beta, t_NW, R2, R2_OS, n)
 
 # --------------
 # Part C: Comparison of Wikipedia and Google Trends Data 
