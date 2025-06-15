@@ -19,6 +19,11 @@ library(zoo)
 library(sandwich)
 library(lmtest)
 library(stargazer)
+library(ggplot2)
+library(xtable)
+library(tidyr)
+library(scales)
+library(patchwork)
 
 # Load self-written Functions from Functions_Clean.R
 source("Functions_Clean.R")
@@ -38,7 +43,8 @@ df_returns <- read_excel("data/SP500_returndata.xlsx", sheet = "Monthly") %>%
 # Part A: Wikipedia Analysis
 # ----------------
 
-wiki_articles <- c("War", "Pandemic", "Boycott", "Panic", "Tariff", "Trade_war", "Consumption", "Stock_bubble")
+wiki_articles <- c("War", "Pandemic", "Panic", "Bank_run", "Business_confidence", "Poverty", "Savings", "Consumption", "Inflation", "Unemployment", "Technology", "Real_estate_bubble", "Crash", "Stock_bubble", 
+                   "Speculation", "Bear_market", "Boycott", "Wage", "Tariff", "Trade_war")
 
 wiki_list <- lapply(wiki_articles, fetch_wv, df_dates = df_returns$date) #uses the function in Functions_Clean.R
 names(wiki_list) <- wiki_articles
@@ -47,14 +53,117 @@ df_wiki <- merge_all_trends(df_returns, wiki_list)
 
 wiki_in <- run_all_forecasts(df_returns, df_wiki, wiki_articles)
 
+########### In-Sample Analysis: 
+
+# Replication of Figure 2: 
+# Instead of creating word clouds as in Figure 2, use a simplified Topic Attention Measure based on Wikipedia data to construct a figure of which topics captured public attention over time.
+plot_wikipedia_topic_attention(
+  df_wiki, topics = wiki_articles,
+  scale_each = TRUE, 
+  output_file = "figure2_topics.pdf"
+)
+
+# Replication of Table 2:
+wiki_summary <- generate_topic_summary_table(df_wiki, file_out = "table2_wikipedia.tex")
+
+
+# Replication of Figure 4 for Tariffs and Trade_war
+
+plot_figure_4(df_returns, df_wiki, "Tariff", output_file = "figure4_tariffs_wiki.pdf")
+plot_figure_4(df_returns, df_wiki, "Trade_war", output_file = "figure4_tradewar_wiki.pdf")
+
+
+#Replication of Table 3
+
+# Table 3 replication - Pre-2020 period (Historical, replication)
+table3_wiki_pre2020 <- replicate_table3(
+  df_returns, df_wiki,
+  topics = wiki_articles,
+  start = "2015-01-01", end = "2019-12-31"
+)
+
+# Table 3 replication - Post-2020 period (Own contribution)
+table3_wiki_post2020 <- replicate_table3(
+  df_returns, df_wiki,
+  topics = wiki_articles,
+  start = "2020-01-01", end = "2024-12-31"
+)
+
+table3_combined <- full_join(
+  table3_wiki_pre2020 %>% rename(Beta_Pre2020 = Beta, t_Pre2020 = t_stat, R2_Pre2020 = R2),
+  table3_wiki_post2020 %>% rename(Beta_Post2020 = Beta, t_Post2020 = t_stat, R2_Post2020 = R2),
+  by = "Topic"
+)
+
+
+####Out-of-sample: 
+
 wiki_out <- purrr::map_dfr(wiki_articles, function(topic) {
   run_oos_forecast(df_returns, df_wiki, topic, start_year = 2016)
 })
 
 
+
+
+###### Replication of Table 8 ###########
+
+#Step 1) Load Goyal & Welch predictors
+df_goyal <- read_excel("data/Data2024_GoyalWelch.xlsx", sheet = "Monthly") %>% 
+  rename(date_num = yyyymm) %>% 
+  mutate(
+    date = as.Date(paste0(date_num, "01"), format = "%Y%m%d")
+  ) %>%
+  select(date, DP = `d/p`, DY = `d/y`, EP = `e/p`, DE = `d/e`, TBL = tbl)
+  
+# Step 2) Merge with return data
+df_econ <- df_returns %>%
+  inner_join(df_goyal, by = "date") #%>% 
+  #select(-Rlead)
+
+# Step 3) Run OOS forecast for each economic predictor
+#econ_predictors <- intersect(c("DP", "DY", "EP", "DE", "TBL"), colnames(df_econ))
+econ_predictors <- names(df_econ)[c(2:7)]  # 
+
+econ_out <- purrr::map_dfr(econ_predictors, function(p) {
+  run_oos_forecast(df_econ, p, start_year = 2016)
+})
+
+# Step 4: Combine with Wikipedia Predictors and Format Table 8
+
+table8_combined <- bind_rows(
+  wiki_out %>% mutate(Source = "Wikipedia"),
+  econ_out %>% mutate(Source = "Economic")
+) %>%
+  select(Source, Topic, R2_OS) %>% 
+  arrange(desc(R2_OS)) %>%
+  mutate(R2_OS = round(R2_OS, 3))
+  
+ # Step 5: Export Latex Table
+xtable(table8_combined,
+       caption = "Out-of-Sample $R^2$ for Wikipedia and Economic Predictors (2016–2024)",
+       label = "tab:table8_combined",
+       digits = c(0, 0, 0, 3)) %>%
+  print(type = "latex", include.rownames = FALSE, file = "table8_combined.tex")
+
+
+
+##############
+
+
+##### CSPE Plot: 
+
+plot_cspe_oos(df_returns, df_wiki, topic = "War", start_year = 2016, output_file = "cspe_war_wiki.pdf")
+
+
 wiki_combined <- wiki_in %>% 
   inner_join(wiki_out, by = "Topic") %>% 
   select(Topic, Beta, t_NW, R2, R2_OS, n)
+
+
+#Strong performers (R2_OS > 0.15): Bear_market, Speculation, Crash, Consumption, War, Real_estate_bubble, Panic, Stock_bubble
+#Moderate Topics (R2_OS between 0.10 an 0.15): Business_Confidence, Poverty, Savings, Unemployment, Technology, Inflation, Tariff, Wage
+
+
 
 
 # ----------------
@@ -65,8 +174,9 @@ wiki_combined <- wiki_in %>%
 gt_topics <- c(
   "War" = "war_trends.csv",
   "Pandemic" = "pandemic_trends.csv",
-  "Boycott" = "boycott_trends.csv",
   "Panic" = "panic_trends.csv",
+  "Bank_run" = "bank_run_trends.csv",
+  "Boycott" = "boycott_trends.csv",
   "Tariff" = "tariffs_trends.csv",
   "Trade_war" = "trade_war_trends.csv",
   "Consumption" = "consumption_trends.csv",
@@ -100,7 +210,64 @@ comparison <- bind_rows(wiki_combined, gt_combined) %>%
   arrange(desc(R2_OS))
 
 
+# ---------
+# Part D: Visual Analysis: 
+# ---------
 
 
-
-
+# #Plot 1 to show how media attention to war evolves over time 
+# 
+# df_plot_wiki_war <- df_wiki %>%
+#   select(date, War) %>% 
+#   mutate(War_z = scale(War))
+# 
+# df_plot_gt_war <- df_gt %>% 
+#   select(date, War) %>% 
+#   mutate(War_z = scale(War))
+# 
+# events <- data.frame(
+#   date = as.Date(c("2003-03-01", "2008-08-01", "2014-03-01", "2020-01-01", "2022-02-01")),
+#   label = c("Iraq War", "Georgia War", "Crimea", "US–Iran", "Ukraine Invasion")
+# )
+# 
+# ggplot() +
+#   geom_line(data = df_plot_wiki_war, aes(x=date, y=War_z), color = "steelblue" ) +
+#   geom_line(data = df_plot_gt_war, aes(x=date, y = War_z), color = "darkgreen") +
+#   geom_vline(data = events, aes(xintercept = date), linetype = "dashed", color = "darkred") +
+#   geom_text(data = events, aes(x = date, y = 2, label = label), angle = 90, vjust = -0.5, hjust = 0, size = 3.2) +
+#   labs(title = "Standardized War Topic Index Over Time",
+#        subtitle = "Wikipedia pageviews (Standardized z-score)",
+#        y = "Standardized Index", x = "Date") + 
+#   scale_x_date(date_labels = "%Y", date_breaks = "2 years") +
+#   theme_minimal()
+# 
+# 
+# #Plot 2 to show which topics significantly predict returns (visualisation of Table 3)
+# #visualizes the estimated regression coefficients from our predictive model
+# #each bar shows the size and direction of the effect 
+# #the label on the bay shors the Newey-West t-statistic
+# 
+# df_beta <- wiki_in 
+# 
+# ggplot(df_beta, aes(x = reorder(Topic, Beta), y = Beta)) +
+#   geom_col(fill = "darkred") +
+#   geom_text(aes(label = round(t_NW, 2)), vjust = -0.5) +
+#   geom_hline(yintercept = 0, linetype = "dashed") +
+#   labs(title = "Estimated β Coefficients and t-Statistics", y = "β Estimate", x = "Topic") +
+#   coord_flip() +
+#   theme_minimal()
+# 
+# 
+# #Plot 3 to compare the forecasting power of different discourse themes
+# 
+# df_r2 <- wiki_out
+# 
+# ggplot(df_r2, aes(x = reorder(Topic, R2_OS), y = R2_OS)) +
+#   geom_col(fill = "darkgreen") +
+#   geom_text(aes(label = round(R2_OS, 3)), vjust = -0.5) +
+#   labs(title = "Out-of-Sample R2 by Topic",
+#         y = "R2 (Out-of-Sample)", x = "Topic") +
+#   coord_flip() +
+#   theme_minimal()
+# 
+# 
