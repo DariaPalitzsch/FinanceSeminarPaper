@@ -69,9 +69,10 @@ plot_wikipedia_topic_attention(
 # see table, additionally q1, q3 and AC1
 wiki_summary <- generate_topic_summary_table(df_wiki, file_out = "table2_wikipedia.tex")
 
+tools::texi2pdf("wiki_summary.tex", clean = TRUE)
 
 # Replication of Figure 4 for Tariffs and Trade_war
-# peaks coudld use some explaination which event happened that caused it
+# peaks could use some explanation which event happened that caused it
 plot_figure_4(df_returns, df_wiki, "Tariff", output_file = "figure4_tariffs_wiki.pdf")
 plot_figure_4(df_returns, df_wiki, "Trade_war", output_file = "figure4_tradewar_wiki.pdf")
 
@@ -107,7 +108,20 @@ wiki_out <- purrr::map_dfr(wiki_articles, function(topic) {
   run_oos_forecast(df_wiki_oos, topic, start_year = 2016)
 })
 
+#do the analysis for pre and post 2020 
 
+wiki_out_pre <- purrr::map_dfr(wiki_articles, function(topic) {
+  run_oos_forecast_period(df_wiki_oos, topic, start_date = min(df_wiki_oos$date), end_date = "2019-12-31")
+}) %>% rename(R2_OS_Pre2020 = R2_OS)
+
+wiki_out_post <- purrr::map_dfr(wiki_articles, function(topic) {
+  df <- df_wiki_oos %>% filter(date >= split_date)
+  run_oos_forecast(df, topic, start_year = 2020)
+}) %>% rename(R2_OS_Post2020 = R2_OS)
+
+#merge pre and post Wikipedia OOS 
+wiki_out_combined <- full_join(wiki_out_pre, wiki_out_post, by = "Topic") %>% 
+  mutate(Source = "Wikipedia")
 
 
 ###### Replication of Table 8 ###########
@@ -133,6 +147,19 @@ econ_out <- purrr::map_dfr(econ_predictors, function(p) {
   run_oos_forecast(df_econ, p, start_year = 2016)
 })
 
+#do the analysis for pre and post 2020
+econ_out_pre <- purrr::map_dfr(econ_predictors, function(p) {
+  run_oos_forecast_period(df_econ, p, start_date = as.Date("2015-07-01"), end_date = split_date)
+}) %>% rename(R2_OS_Pre2020 = R2_OS)
+
+econ_out_post <- purrr::map_dfr(econ_predictors, function(p) {
+  df <- df_econ %>% filter(date >= split_date)
+  run_oos_forecast(df, p, start_year = 2020)
+}) %>% rename(R2_OS_Post2020 = R2_OS)
+
+econ_out_combined <- full_join(econ_out_pre, econ_out_post, by = "Topic") %>% 
+  mutate(Source = "Economic")
+
 # Step 4: Combine with Wikipedia Predictors and Format Table 8
 
 table8_combined <- bind_rows(
@@ -142,6 +169,10 @@ table8_combined <- bind_rows(
   select(Source, Topic, R2_OS) %>% 
   arrange(desc(R2_OS)) %>%
   mutate(R2_OS = round(R2_OS, 3))
+
+table8_split <- bind_rows(wiki_out_combined, econ_out_combined) %>%
+  select(Source, Topic, R2_OS_Pre2020, R2_OS_Post2020) %>%
+  arrange(desc(R2_OS_Post2020))
   
  # Step 5: Export Latex Table
 xtable(table8_combined,
@@ -216,15 +247,21 @@ df_gt <- merge_all_trends(df_returns, gt_list)
 gt_in <- run_all_forecasts(df_returns, df_gt, names(gt_topics))
 
 
+
 # --------------
-# Part C: Comparison of Wikipedia and Google Trends Data 
+# Part C: Comparison of Wikipedia and Google Trends Data for the Topics that we did for both: IN-SAMPLE ANALYSIS
 # -------------
 
-wiki_combined$Source <- "Wikipedia"
-gt_combined$Source <- "Google Trends"
+wiki_in$Source <- "Wikipedia" 
 
-comparison <- bind_rows(wiki_combined, gt_combined) %>%
-  arrange(desc(R2_OS))
+wiki_in_both <- wiki_in %>% 
+  filter(Topic %in% c("Pandemic", "Panic", "Bank_run", "Boycott", "Tariff", "Trade_war", "Bear_market", "Speculation", "Stock_bubble", "Crash"))
+
+
+gt_in$Source <- "Google Trends"
+
+comparison <- bind_rows(wiki_in_both, gt_in) %>%
+  arrange(desc(R2))
 
 
 # ---------

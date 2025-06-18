@@ -327,6 +327,11 @@ run_oos_forecast <- function(df, pred, start_year = 2016) {
   )
 }
 
+#Helper funciton to run OOS forecast for a given period
+run_oos_forecast_period <- function(df, topic, start_date, end_date) {
+  df <- df %>% filter(date < end_date)
+  run_oos_forecast(df, topic, start_date)
+}
 
 
 # Locate file in data/ or project root // helper function for read_trends()
