@@ -370,75 +370,151 @@ read_trends <- function(filename, series_name) {
 
 #CSPE plot function for out-of-sample analysis
 
-plot_cspe_oos <- function(df_returns, df_trends, topic, start_year = 2016, benchmark = "mean", output_file = NULL) {
-  
-  # Use tidy evaluation to refer to topic column
-  pred_sym <- sym(topic)
-  
-  # Merge return and predictor data
-  df <- df_returns %>%
-    inner_join(df_trends, by = "date") %>%
-    filter(!is.na(Rlead), !is.na(!!pred_sym)) %>%
-    mutate(
-      X = scale(!!pred_sym), # Standardize the predictor variable
-      Y = Rlead * 100  # Convert return to percent
-    ) %>%
-    arrange(date)
-  
-  # Define start of out-of-sample window
-  oos_start <- as.Date(paste0(start_year, "-01-01"))
-  oos_dates <- df$date[df$date >= oos_start]
-  
-  # Initialize containers
-  model_spe <- benchmark_spe <- dates_used <- numeric()
-  
-  # Loop through each OOS date to simulate expanding window
-  for (i in seq_along(oos_dates)) {
-    date_i <- oos_dates[i]
-    df_train <- df %>% filter(date < date_i) # Data up to date_i-1
-    df_test  <- df %>% filter(date == date_i) # Data at date_i
-    
-    # Skip if insufficient data
-    if (nrow(df_train) < 12 || nrow(df_test) == 0) next
-    
-    # Fit forecasting model: Y ~ X
-    model <- lm(Y ~ X, data = df_train)
-    pred_model <- predict(model, newdata = df_test)
-    spe_model <- (df_test$Y - pred_model)^2
-    
-    # Calculate benchmark prediction error (historical mean model)
-    if (benchmark == "mean") {
-      pred_bench <- mean(df_train$Y)
-    } else {
-      stop("Unsupported benchmark")
-    }
-    spe_bench <- (df_test$Y - pred_bench)^2
-    
-    # Store results
-    model_spe <- c(model_spe, spe_model)
-    benchmark_spe <- c(benchmark_spe, spe_bench)
-    dates_used <- c(dates_used, date_i)
-  }
-  
-  # Build tibble with cumulative SPEs
-  df_plot <- tibble(
-    date = as.Date(dates_used, origin = "1970-01-01"),
-    Model_CSPE = cumsum(model_spe),
-    Benchmark_CSPE = cumsum(benchmark_spe)
-  )
-  
-  # Generate the line plot
-  p <- ggplot(df_plot, aes(x = date)) +
-    geom_line(aes(y = Benchmark_CSPE), color = "gray40", linetype = "dashed") +
-    geom_line(aes(y = Model_CSPE), color = "steelblue", size = 1) +
-    labs(title = paste("Out-of-Sample CSPE –", topic),
-         x = "Date", y = "Cumulative Squared Prediction Error") +
-    theme_minimal(base_size = 12)
-  
-  if (!is.null(output_file)) {
-    ggsave(output_file, p, width = 10, height = 5)
-  }
-  
-  return(p)
-}
+# plot_cspe_oos <- function(df_returns, df_trends, topic, start_year = 2016, benchmark = "mean", output_file = NULL) {
+#   
+#   # Use tidy evaluation to refer to topic column
+#   pred_sym <- sym(topic)
+#   
+#   # Merge return and predictor data
+#   df <- df_returns %>%
+#     inner_join(df_trends, by = "date") %>%
+#     filter(!is.na(Rlead), !is.na(!!pred_sym)) %>%
+#     mutate(
+#       X = scale(!!pred_sym), # Standardize the predictor variable
+#       Y = Rlead * 100  # Convert return to percent
+#     ) %>%
+#     arrange(date)
+#   
+#   # Define start of out-of-sample window
+#   oos_start <- as.Date(paste0(start_year, "-01-01"))
+#   oos_dates <- df$date[df$date >= oos_start]
+#   
+#   # Initialize containers
+#   model_spe <- benchmark_spe <- dates_used <- numeric()
+#   
+#   # Loop through each OOS date to simulate expanding window
+#   for (i in seq_along(oos_dates)) {
+#     date_i <- oos_dates[i]
+#     df_train <- df %>% filter(date < date_i) # Data up to date_i-1
+#     df_test  <- df %>% filter(date == date_i) # Data at date_i
+#     
+#     # Skip if insufficient data
+#     if (nrow(df_train) < 12 || nrow(df_test) == 0) next
+#     
+#     # Fit forecasting model: Y ~ X
+#     model <- lm(Y ~ X, data = df_train)
+#     pred_model <- predict(model, newdata = df_test)
+#     spe_model <- (df_test$Y - pred_model)^2
+#     
+#     # Calculate benchmark prediction error (historical mean model)
+#     if (benchmark == "mean") {
+#       pred_bench <- mean(df_train$Y)
+#     } else {
+#       stop("Unsupported benchmark")
+#     }
+#     spe_bench <- (df_test$Y - pred_bench)^2
+#     
+#     # Store results
+#     model_spe <- c(model_spe, spe_model)
+#     benchmark_spe <- c(benchmark_spe, spe_bench)
+#     dates_used <- c(dates_used, date_i)
+#   }
+#   
+#   # Build tibble with cumulative SPEs
+#   df_plot <- tibble(
+#     date = as.Date(dates_used, origin = "1970-01-01"),
+#     Model_CSPE = cumsum(model_spe),
+#     Benchmark_CSPE = cumsum(benchmark_spe)
+#   )
+#   
+#   # Generate the line plot
+#   p <- ggplot(df_plot, aes(x = date)) +
+#     geom_line(aes(y = Benchmark_CSPE), color = "gray40", linetype = "dashed") +
+#     geom_line(aes(y = Model_CSPE), color = "steelblue", size = 1) +
+#     labs(title = paste("Out-of-Sample CSPE –", topic),
+#          x = "Date", y = "Cumulative Squared Prediction Error") +
+#     theme_minimal(base_size = 12)
+#   
+#   if (!is.null(output_file)) {
+#     ggsave(output_file, p, width = 10, height = 5)
+#   }
+#   
+#   return(p)
+# }
 
+plot_cspe_grid <- function(df_returns, df_trends, topic_vec, start_year = 2016, benchmark = "mean", output_file = NULL) {
+  
+  # Helper function for a single topic
+  plot_single_cspe <- function(topic) {
+    
+    pred_sym <- sym(topic)
+    
+    df <- df_returns %>%
+      inner_join(df_trends, by = "date") %>%
+      filter(!is.na(Rlead), !is.na(!!pred_sym)) %>%
+      mutate(
+        X = scale(!!pred_sym),
+        Y = Rlead * 100
+      ) %>%
+      arrange(date)
+    
+    oos_start <- as.Date(paste0(start_year, "-01-01"))
+    oos_dates <- df$date[df$date >= oos_start]
+    
+    model_spe <- benchmark_spe <- dates_used <- numeric()
+    
+    for (i in seq_along(oos_dates)) {
+      date_i <- oos_dates[i]
+      df_train <- df %>% filter(date < date_i)
+      df_test  <- df %>% filter(date == date_i)
+      if (nrow(df_train) < 12 || nrow(df_test) == 0) next
+      
+      model <- lm(Y ~ X, data = df_train)
+      pred_model <- predict(model, newdata = df_test)
+      spe_model <- (df_test$Y - pred_model)^2
+      
+      if (benchmark == "mean") {
+        pred_bench <- mean(df_train$Y)
+      } else {
+        stop("Unsupported benchmark")
+      }
+      spe_bench <- (df_test$Y - pred_bench)^2
+      
+      model_spe <- c(model_spe, spe_model)
+      benchmark_spe <- c(benchmark_spe, spe_bench)
+      dates_used <- c(dates_used, date_i)
+    }
+    
+    df_plot <- tibble(
+      date = as.Date(dates_used, origin = "1970-01-01"),
+      Model_CSPE = cumsum(model_spe),
+      Benchmark_CSPE = cumsum(benchmark_spe)
+    )
+    
+    ggplot(df_plot, aes(x = date)) +
+      geom_line(aes(y = Benchmark_CSPE), color = "gray40", linetype = "dashed") +
+      geom_line(aes(y = Model_CSPE), color = "steelblue", size = 0.7) +
+      labs(title = topic, x = NULL, y = NULL) +
+      theme_minimal(base_size = 10) +
+      theme(
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 7),
+        axis.text.y = element_text(size = 7)
+      )
+  }
+  
+  # Apply the helper function to all topics
+  plots <- lapply(topic_vec, plot_single_cspe)
+  
+  # Combine with patchwork into grid
+  plot_grid <- wrap_plots(plots, ncol = 4) +
+    plot_annotation(title = "Out-of-Sample CSPE – All Topics",
+                    theme = theme(plot.title = element_text(hjust = 0.5)))
+  
+  # Save to file if specified
+  if (!is.null(output_file)) {
+    ggsave(output_file, plot_grid, width = 16, height = 10)
+  }
+  
+  return(plot_grid)
+}

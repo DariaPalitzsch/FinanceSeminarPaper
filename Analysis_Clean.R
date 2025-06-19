@@ -25,6 +25,9 @@ library(tidyr)
 library(scales)
 library(patchwork)
 library(rlang)
+library(magick)
+library(pdftools)
+library(tibble)
 
 # Load self-written Functions from Functions_Clean.R
 source("Functions_Clean.R")
@@ -64,6 +67,10 @@ plot_wikipedia_topic_attention(
   scale_each = TRUE, 
   output_file = "figure2_topics.pdf"
 )
+
+# Convert PDF to PNG (adjust dpi for quality)
+img <- magick::image_read_pdf("figure2_topics.pdf", density = 300)
+image_write(img, path = "figure2_topics.png", format = "png")
 
 # Replication of Table 2:
 # see table, additionally q1, q3 and AC1
@@ -182,19 +189,27 @@ xtable(table8_combined,
   print(type = "latex", include.rownames = FALSE, file = "table8_combined.tex")
 
 
+xtable(table8_split,
+       caption = "Out-of-Sample $R^2$ for Wikipedia and Economic Predictors (Pre- and Post 2020)",
+       label = "tab:table8_split",
+       digits = c(0, 0, 0, 3, 3)) %>%
+  print(type = "latex", include.rownames = FALSE, file = "table8_split.tex")
+
 
 ##############
 
+##### CSPE Plots: 
 
-##### CSPE Plot: 
+plot_cspe_grid(df_returns, df_wiki, wiki_articles, start_year = 2016, output_file = "cspe_grid_wiki.png")
+#plot_cspe_oos(df_returns, df_wiki, topic = "War", start_year = 2016, output_file = "cspe_war_wiki.pdf")
 
-plot_cspe_oos(df_returns, df_wiki, topic = "War", start_year = 2016, output_file = "cspe_war_wiki.pdf")
 
 
-wiki_combined <- wiki_in %>% 
-  inner_join(wiki_out, by = "Topic") %>% 
-  select(Topic, Beta, t_NW, R2, R2_OS, n)
 
+
+
+
+#End of First Part -> we now go over to Google Trends Analysis
 
 #Strong performers (R2_OS > 0.15): Bear_market, Speculation, Crash, Consumption, War, Real_estate_bubble, Panic, Stock_bubble
 #Moderate Topics (R2_OS between 0.10 an 0.15): Business_Confidence, Poverty, Savings, Unemployment, Technology, Inflation, Tariff, Wage
@@ -244,25 +259,30 @@ names(gt_list) <- names(gt_topics)
 
 df_gt <- merge_all_trends(df_returns, gt_list)
 
-gt_in <- run_all_forecasts(df_returns, df_gt, names(gt_topics))
+gt_in <- run_all_forecasts(df_returns, df_gt, names(gt_topics)) %>% 
 
-
+colnames(gt_in) <- c("Topic", "Beta Google", "t_NW Google", "R2 Google")
 
 # --------------
 # Part C: Comparison of Wikipedia and Google Trends Data for the Topics that we did for both: IN-SAMPLE ANALYSIS
 # -------------
 
-wiki_in$Source <- "Wikipedia" 
+#Table 3 Replication: Comparison between Google Trends and Wikipedia Pageviews in-sample 
 
 wiki_in_both <- wiki_in %>% 
-  filter(Topic %in% c("Pandemic", "Panic", "Bank_run", "Boycott", "Tariff", "Trade_war", "Bear_market", "Speculation", "Stock_bubble", "Crash"))
+  filter(Topic %in% c("Pandemic", "Panic", "Bank_run", "Boycott", "Tariff", "Trade_war", "Bear_market", "Speculation", "Stock_bubble", "Crash")) %>% 
+  arrange(factor(Topic, levels = c("Pandemic", "Panic", "Bank_run", "Boycott", "Tariff", "Trade_war", "Bear_market", "Speculation", "Stock_bubble", "Crash")))
 
+colnames(wiki_in_both) <- c("Topic_Wiki", "Beta Wiki", "t_NW Wiki", "R2_Wiki")
 
-gt_in$Source <- "Google Trends"
+table3_comparison <- cbind(wiki_in_both, gt_in) %>% select(-Topic_Wiki) %>% 
+  relocate(Topic, .before = "Beta Wiki")
 
-comparison <- bind_rows(wiki_in_both, gt_in) %>%
-  arrange(desc(R2))
-
+xtable(table3_comparison,
+       caption = "Side-by-Side Comparison of In-Sample Predictive Regression Results for Wikipedia Pageviews and Google Trends Attention (Topics Selected Based on Discourse Salience)",
+       label = "tab:table3_comparison",
+       digits = c(0, 0, 3, 3, 3, 3, 3, 3)) %>%
+  print(type = "latex", include.rownames = FALSE, file = "table3_comparison.tex")
 
 # ---------
 # Part D: Visual Analysis: 
